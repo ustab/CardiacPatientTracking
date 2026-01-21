@@ -8,38 +8,41 @@ from reportlab.pdfgen import canvas
 import io
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="EVEYES 360 - HF Smart Track", layout="centered")
+st.set_page_config(page_title="EVEYES 360 - Universal Edema Tracker", layout="centered")
 
-# --- DİL SÖZLÜĞÜ ---
+# --- DİL VE MESAJ SÖZLÜĞÜ (Geliştirilmiş) ---
 LANGS = {
     "TR": {
-        "title": "KKY Mobil Takip", "weight": "Ağırlık (kg)", "ohm": "BİA (Ohm Ω)",
-        "save": "ANALİZ ET & KAYDET", "history": "GEÇMİŞ", "report": "DR. RAPORU (PDF)",
-        "risk": "🚨 RİSK: ÖDEM!", "stable": "✅ DURUM: STABİL", "patient": "Hasta:", "phone": "Tel:",
-        "mail_ok": "PDF ve Grafik oluşturuldu!", "settings": "Profil Ayarları",
-        "no_data": "Grafik oluşturmak için önce veri giriniz!", "success": "Kayıt Başarılı!"
+        "title": "EVEYES 360: Dijital Ödem Takibi",
+        "condition": "Takip Edilen Durum",
+        "conditions": ["Kalp Yetmezliği", "Gebelik (Preeklampsi Riski)", "Böbrek Yetmezliği / Diyaliz"],
+        "weight": "Ağırlık (kg)", "ohm": "BİA (Ohm Ω)",
+        "save": "ANALİZ ET & KAYDET", "report": "DR. RAPORU (PDF)",
+        "risk_hf": "🚨 RİSK: Kalp Yetmezliği / Ödem!",
+        "risk_pre": "🚨 RİSK: Preeklampsi / Hipoproteinemi Belirtisi!",
+        "risk_kidney": "🚨 RİSK: Kritik Sıvı Yükü Artışı!",
+        "stable": "✅ DURUM: STABİL",
+        "no_data": "Grafik için veri giriniz!", "success": "Kayıt Başarılı!"
     },
     "EN": {
-        "title": "HF Smart Track", "weight": "Weight (kg)", "ohm": "BIA (Ohm Ω)",
-        "save": "ANALYZE & SAVE", "history": "HISTORY", "report": "DR. REPORT (PDF)",
-        "risk": "🚨 RISK: EDEMA!", "stable": "✅ STATUS: STABLE", "patient": "Patient:", "phone": "Tel:",
-        "mail_ok": "PDF and Chart generated!", "settings": "Profile Settings",
-        "no_data": "Enter data first to generate chart!", "success": "Saved Successfully!"
-    },
-    "DE": {
-        "title": "HF Intelligenter Track", "weight": "Gewicht (kg)", "ohm": "BIA (Ohm Ω)",
-        "save": "ANALYSE & SPEICHERN", "history": "HISTORIE", "report": "BERICHT (PDF)",
-        "risk": "🚨 RISIKO: ÖDEM!", "stable": "✅ STATUS: STABIL", "patient": "Patient:", "phone": "Tel:",
-        "mail_ok": "Bericht und Grafik erstellt!", "settings": "Profil-Einstellungen",
-        "no_data": "Zuerst Daten eingeben!", "success": "Erfolgreich gespeichert!"
+        "title": "EVEYES 360: Digital Edema Tracker",
+        "condition": "Monitored Condition",
+        "conditions": ["Heart Failure", "Pregnancy (Preeclampsia Risk)", "Kidney Disease / Dialysis"],
+        "weight": "Weight (kg)", "ohm": "BIA (Ohm Ω)",
+        "save": "ANALYZE & SAVE", "report": "DR. REPORT (PDF)",
+        "risk_hf": "🚨 RISK: Heart Failure / Edema!",
+        "risk_pre": "🚨 RISK: Preeclampsia / Hypoproteinemia Sign!",
+        "risk_kidney": "🚨 RISK: Critical Fluid Overload!",
+        "stable": "✅ STATUS: STABLE",
+        "no_data": "Enter data for chart!", "success": "Saved!"
     }
 }
 
-# --- VERİTABANI İŞLEMLERİ ---
+# --- VERİTABANI ---
 def init_db():
-    conn = sqlite3.connect("kky_final_storage.db", check_same_thread=False)
+    conn = sqlite3.connect("medical_storage.db", check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS records (dt TEXT, w REAL, b INTEGER, msg TEXT)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS records (dt TEXT, w REAL, b INTEGER, msg TEXT, cond TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS user_info (key TEXT PRIMARY KEY, value TEXT)")
     conn.commit()
     return conn
@@ -48,118 +51,73 @@ conn = init_db()
 cursor = conn.cursor()
 
 # --- SIDEBAR / AYARLAR ---
-st.sidebar.title("⚙️ " + "Settings")
-lang_choice = st.sidebar.selectbox("Language / Dil", ["TR", "EN", "DE"])
+st.sidebar.title("🩺 Patient Profile")
+lang_choice = st.sidebar.selectbox("Language", ["TR", "EN"])
 L = LANGS[lang_choice]
 
-st.sidebar.divider()
-st.sidebar.subheader(L["settings"])
-
-# Kullanıcı bilgilerini yükle/kaydet
-cursor.execute("SELECT value FROM user_info WHERE key='name'")
-res_n = cursor.fetchone()
-default_name = res_n[0] if res_n else ""
-
-cursor.execute("SELECT value FROM user_info WHERE key='phone'")
-res_p = cursor.fetchone()
-default_phone = res_p[0] if res_p else ""
-
-p_name = st.sidebar.text_input("Patient Name", default_name)
-p_phone = st.sidebar.text_input("Phone", default_phone)
-
-if st.sidebar.button("Update Profile"):
-    cursor.execute("INSERT OR REPLACE INTO user_info VALUES ('name', ?)", (p_name,))
-    cursor.execute("INSERT OR REPLACE INTO user_info VALUES ('phone', ?)", (p_phone,))
-    conn.commit()
-    st.sidebar.success("Updated!")
+p_name = st.sidebar.text_input("Full Name", "Hasta Adı")
+p_cond = st.sidebar.selectbox(L["condition"], L["conditions"])
 
 # --- ANA EKRAN ---
-st.title("🏥 " + L["title"])
-st.info(f"👤 {p_name if p_name else '---'}  |  📞 {p_phone if p_phone else '---'}")
+st.title("🛡️ " + L["title"])
+st.subheader(f"Monitoring: {p_cond}")
 
 # Veri Giriş Kartı
-with st.container():
+with st.expander("➕ Yeni Ölçüm Ekle", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
-        w_input = st.number_input(L["weight"], min_value=30.0, max_value=250.0, value=75.0, step=0.1)
+        w_input = st.number_input(L["weight"], value=70.0, step=0.1)
     with col2:
-        b_input = st.number_input(L["ohm"], min_value=100, max_value=1000, value=500)
+        b_input = st.number_input(L["ohm"], value=500, step=1)
     
     if st.button(L["save"], use_container_width=True, type="primary"):
         dt_now = datetime.now().strftime("%d/%m %H:%M")
         
-        # Risk Analizi
-        cursor.execute("SELECT w, b FROM records ORDER BY rowid DESC LIMIT 1")
+        # Akıllı Risk Analizi
+        cursor.execute("SELECT w, b FROM records WHERE cond=? ORDER BY rowid DESC LIMIT 1", (p_cond,))
         last = cursor.fetchone()
-        status_msg = L["stable"]
         
+        status_msg = L["stable"]
         if last and w_input > last[0] and b_input < last[1]:
-            status_msg = L["risk"]
+            if "Gebelik" in p_cond or "Pregnancy" in p_cond: status_msg = L["risk_pre"]
+            elif "Böbrek" in p_cond or "Kidney" in p_cond: status_msg = L["risk_kidney"]
+            else: status_msg = L["risk_hf"]
             st.error(status_msg)
         else:
             st.success(status_msg)
             
-        cursor.execute("INSERT INTO records VALUES (?,?,?,?)", (dt_now, w_input, b_input, status_msg))
+        cursor.execute("INSERT INTO records VALUES (?,?,?,?,?)", (dt_now, w_input, b_input, status_msg, p_cond))
         conn.commit()
 
-# --- GRAFİK ALANI ---
-st.divider()
-cursor.execute("SELECT * FROM records ORDER BY rowid DESC LIMIT 7")
+# --- GRAFİK ---
+cursor.execute("SELECT dt, w, b FROM records WHERE cond=? ORDER BY rowid DESC LIMIT 10", (p_cond,))
 rows = cursor.fetchall()[::-1]
 
 if rows:
-    df = pd.DataFrame(rows, columns=["Date", "Weight", "BIA", "Status"])
-    
+    df = pd.DataFrame(rows, columns=["Date", "Weight", "BIA"])
     fig, ax1 = plt.subplots(figsize=(8, 4))
     ax2 = ax1.twinx()
-    
-    ax1.plot(df["Date"], df["Weight"], color="#2980B9", marker="o", label=L["weight"])
-    ax2.plot(df["Date"], df["BIA"], color="#8E44AD", marker="s", linestyle="--", label=L["ohm"])
-    
-    ax1.set_ylabel(L["weight"], color="#2980B9")
-    ax2.set_ylabel(L["ohm"], color="#8E44AD")
-    plt.xticks(rotation=25)
-    
-    fig.legend(loc="upper center", ncol=2)
+    ax1.plot(df["Date"], df["Weight"], color="blue", marker="o", label="Weight")
+    ax2.plot(df["Date"], df["BIA"], color="purple", marker="s", ls="--", label="BIA")
+    ax1.set_ylabel("Weight (kg)")
+    ax2.set_ylabel("BIA (Ohm)")
     st.pyplot(fig)
-    
-    # PDF RAPORLAMA (Bellek üzerinden)
+
+    # PDF Rapor Fonksiyonu
     def generate_pdf():
         buffer = io.BytesIO()
         c = canvas.Canvas(buffer, pagesize=letter)
-        c.setFont("Helvetica-Bold", 16)
-        c.drawString(50, 750, f"HF PATIENT REPORT: {p_name}")
-        c.setFont("Helvetica", 12)
-        c.drawString(50, 730, f"Contact: {p_phone} | Date: {datetime.now().strftime('%Y-%m-%d')}")
+        c.drawString(50, 750, f"PATIENT: {p_name}")
+        c.drawString(50, 735, f"CONDITION: {p_cond}")
         c.line(50, 720, 550, 720)
-        
-        y = 680
-        c.drawString(50, y, "Last Measurements:")
-        y -= 20
-        for index, row in df.iloc[::-1].iterrows():
-            c.drawString(50, y, f"{row['Date']} - W: {row['Weight']}kg - BIA: {row['BIA']} - {row['Status']}")
-            y -= 15
+        c.drawString(50, 700, "The inverse correlation between Weight and BIA indicates fluid retention.")
         c.save()
         buffer.seek(0)
         return buffer
 
-    st.download_button(
-        label="📥 " + L["report"],
-        data=generate_pdf(),
-        file_name=f"Report_{p_name}.pdf",
-        mime="application/pdf",
-        use_container_width=True
-    )
+    st.download_button("📥 " + L["report"], generate_pdf(), f"Report_{p_name}.pdf", "application/pdf")
 else:
-    st.warning(L["no_data"])
-
-# --- GEÇMİŞ TABLOSU ---
-with st.expander(L["history"]):
-    cursor.execute("SELECT * FROM records ORDER BY rowid DESC")
-    all_data = cursor.fetchall()
-    if all_data:
-        st.table(pd.DataFrame(all_data, columns=["Date", "Weight", "BIA", "Result"]))
-
+    st.info(L["no_data"])
 
 """Key Features of EVEYES 360: ENG
 Patient-Centric Header: The dashboard now features the patient’s name and contact information prominently in the header.
@@ -200,6 +158,7 @@ Bir Sonraki Adım:
 bu şekilde kullanmak yeterli mi?
 
 """
+
 
 
 
