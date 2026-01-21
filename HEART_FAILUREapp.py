@@ -1,5 +1,3 @@
-import tkinter as tk
-from tkinter import messagebox, ttk
 import sqlite3
 from datetime import datetime
 import os
@@ -250,4 +248,5 @@ Bir Sonraki Adım:
  olarak yüklemek istersen, Kivy veya BeeWare gibi farklı kütüphaneler 
  kullanmamız gerekir. Bu yönde bir çalışma yapmak ister misin yoksa bilgisayarda 
 bu şekilde kullanmak yeterli mi?
+
 """
