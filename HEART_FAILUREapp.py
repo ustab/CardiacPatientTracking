@@ -1,222 +1,164 @@
+import streamlit as st
 import sqlite3
-from datetime import datetime
-import os
+import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+import io
 
-# --- DİL SÖZLÜĞÜ (TR, EN, DE) ---
+# --- SAYFA AYARLARI ---
+st.set_page_config(page_title="EVEYES 360 - HF Smart Track", layout="centered")
+
+# --- DİL SÖZLÜĞÜ ---
 LANGS = {
     "TR": {
         "title": "KKY Mobil Takip", "weight": "Ağırlık (kg)", "ohm": "BİA (Ohm Ω)",
-        "save": "ANALİZ ET & KAYDET", "history": "GEÇMİŞ", "report": "DR. RAPORU / MAİL",
+        "save": "ANALİZ ET & KAYDET", "history": "GEÇMİŞ", "report": "DR. RAPORU (PDF)",
         "risk": "🚨 RİSK: ÖDEM!", "stable": "✅ DURUM: STABİL", "patient": "Hasta:", "phone": "Tel:",
         "mail_ok": "PDF ve Grafik oluşturuldu!", "settings": "Profil Ayarları",
-        "no_data": "Grafik oluşturmak için önce veri giriniz!"
+        "no_data": "Grafik oluşturmak için önce veri giriniz!", "success": "Kayıt Başarılı!"
     },
     "EN": {
         "title": "HF Smart Track", "weight": "Weight (kg)", "ohm": "BIA (Ohm Ω)",
-        "save": "ANALYZE & SAVE", "history": "HISTORY", "report": "DR. REPORT / MAIL",
+        "save": "ANALYZE & SAVE", "history": "HISTORY", "report": "DR. REPORT (PDF)",
         "risk": "🚨 RISK: EDEMA!", "stable": "✅ STATUS: STABLE", "patient": "Patient:", "phone": "Tel:",
         "mail_ok": "PDF and Chart generated!", "settings": "Profile Settings",
-        "no_data": "Enter data first to generate chart!"
+        "no_data": "Enter data first to generate chart!", "success": "Saved Successfully!"
     },
     "DE": {
         "title": "HF Intelligenter Track", "weight": "Gewicht (kg)", "ohm": "BIA (Ohm Ω)",
-        "save": "ANALYSE & SPEICHERN", "history": "HISTORIE", "report": "BERICHT / MAIL",
+        "save": "ANALYSE & SPEICHERN", "history": "HISTORIE", "report": "BERICHT (PDF)",
         "risk": "🚨 RISIKO: ÖDEM!", "stable": "✅ STATUS: STABIL", "patient": "Patient:", "phone": "Tel:",
         "mail_ok": "Bericht und Grafik erstellt!", "settings": "Profil-Einstellungen",
-        "no_data": "Zuerst Daten eingeben!"
+        "no_data": "Zuerst Daten eingeben!", "success": "Erfolgreich gespeichert!"
     }
 }
 
-class KKYApp:
-    def __init__(self, root):
-        self.root = root
-        self.lang = "TR"
-        self.fig = None  # Grafik kontrol mekanizması için başlangıç değeri
+# --- VERİTABANI İŞLEMLERİ ---
+def init_db():
+    conn = sqlite3.connect("kky_final_storage.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE IF NOT EXISTS records (dt TEXT, w REAL, b INTEGER, msg TEXT)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS user_info (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    return conn
+
+conn = init_db()
+cursor = conn.cursor()
+
+# --- SIDEBAR / AYARLAR ---
+st.sidebar.title("⚙️ " + "Settings")
+lang_choice = st.sidebar.selectbox("Language / Dil", ["TR", "EN", "DE"])
+L = LANGS[lang_choice]
+
+st.sidebar.divider()
+st.sidebar.subheader(L["settings"])
+
+# Kullanıcı bilgilerini yükle/kaydet
+cursor.execute("SELECT value FROM user_info WHERE key='name'")
+res_n = cursor.fetchone()
+default_name = res_n[0] if res_n else ""
+
+cursor.execute("SELECT value FROM user_info WHERE key='phone'")
+res_p = cursor.fetchone()
+default_phone = res_p[0] if res_p else ""
+
+p_name = st.sidebar.text_input("Patient Name", default_name)
+p_phone = st.sidebar.text_input("Phone", default_phone)
+
+if st.sidebar.button("Update Profile"):
+    cursor.execute("INSERT OR REPLACE INTO user_info VALUES ('name', ?)", (p_name,))
+    cursor.execute("INSERT OR REPLACE INTO user_info VALUES ('phone', ?)", (p_phone,))
+    conn.commit()
+    st.sidebar.success("Updated!")
+
+# --- ANA EKRAN ---
+st.title("🏥 " + L["title"])
+st.info(f"👤 {p_name if p_name else '---'}  |  📞 {p_phone if p_phone else '---'}")
+
+# Veri Giriş Kartı
+with st.container():
+    col1, col2 = st.columns(2)
+    with col1:
+        w_input = st.number_input(L["weight"], min_value=30.0, max_value=250.0, value=75.0, step=0.1)
+    with col2:
+        b_input = st.number_input(L["ohm"], min_value=100, max_value=1000, value=500)
+    
+    if st.button(L["save"], use_container_width=True, type="primary"):
+        dt_now = datetime.now().strftime("%d/%m %H:%M")
         
-        self.root.title("KKY Mobile v6")
-        self.root.geometry("400x850")
-        self.root.configure(bg="#F8F9FA")
+        # Risk Analizi
+        cursor.execute("SELECT w, b FROM records ORDER BY rowid DESC LIMIT 1")
+        last = cursor.fetchone()
+        status_msg = L["stable"]
         
-        self.init_db()
-        self.load_user_info()
-        self.setup_ui()
-        self.refresh_plot()
-
-    def init_db(self):
-        self.conn = sqlite3.connect("kky_final_storage.db")
-        self.cursor = self.conn.cursor()
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS records (dt TEXT, w REAL, b INTEGER, msg TEXT)")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS user_info (key TEXT PRIMARY KEY, value TEXT)")
-        self.conn.commit()
-
-    def load_user_info(self):
-        self.cursor.execute("SELECT value FROM user_info WHERE key='name'")
-        res_n = self.cursor.fetchone()
-        self.p_name = res_n[0] if res_n else "İsim Giriniz"
-        
-        self.cursor.execute("SELECT value FROM user_info WHERE key='phone'")
-        res_p = self.cursor.fetchone()
-        self.p_tel = res_p[0] if res_p else "+90 5..."
-
-    def save_settings(self, name, phone):
-        self.cursor.execute("INSERT OR REPLACE INTO user_info VALUES ('name', ?)", (name,))
-        self.cursor.execute("INSERT OR REPLACE INTO user_info VALUES ('phone', ?)", (phone,))
-        self.conn.commit()
-        self.p_name, self.p_tel = name, phone
-        self.lbl_p_name.config(text=f"👤 {self.p_name}")
-        self.lbl_p_tel.config(text=f"📞 {self.p_tel}")
-
-    def setup_ui(self):
-        # Header (Hasta Bilgileri - Başlık Değiştirildi)
-        header = tk.Frame(self.root, bg="#1E3799", pady=15)
-        header.pack(fill="x")
-        
-        l_frame = tk.Frame(header, bg="#1E3799")
-        l_frame.pack(anchor="ne", padx=10)
-        for l in ["TR", "EN", "DE"]:
-            tk.Button(l_frame, text=l, font=("Arial", 7), command=lambda lang=l: self.change_lang(lang)).pack(side="left", padx=2)
-
-        self.lbl_p_name = tk.Label(header, text=f"👤 {self.p_name}", bg="#1E3799", fg="white", font=("Arial", 12, "bold"))
-        self.lbl_p_name.pack()
-        self.lbl_p_tel = tk.Label(header, text=f"📞 {self.p_tel}", bg="#1E3799", fg="#BDC3C7", font=("Arial", 9))
-        self.lbl_p_tel.pack()
-        
-        tk.Button(header, text="⚙️", bg="#1E3799", fg="white", bd=0, command=self.open_settings).place(x=10, y=10)
-
-        # Veri Giriş Kartı
-        card = tk.Frame(self.root, bg="white", padx=20, pady=20)
-        card.pack(padx=15, pady=15, fill="x")
-
-        self.lbl_w = tk.Label(card, text=LANGS[self.lang]["weight"], bg="white", font=("Arial", 10, "bold"))
-        self.lbl_w.pack(anchor="w")
-        self.w_ent = tk.Entry(card, font=("Arial", 12), bg="#F1F3F4", bd=0); self.w_ent.pack(fill="x", pady=5, ipady=5)
-
-        self.lbl_b = tk.Label(card, text=LANGS[self.lang]["ohm"], bg="white", font=("Arial", 10, "bold"))
-        self.lbl_b.pack(anchor="w", pady=(10,0))
-        self.b_ent = tk.Entry(card, font=("Arial", 12), bg="#F1F3F4", bd=0); self.b_ent.pack(fill="x", pady=5, ipady=5)
-
-        self.btn_save = tk.Button(card, text=LANGS[self.lang]["save"], bg="#27AE60", fg="white", font=("Arial", 10, "bold"), command=self.save_data, bd=0)
-        self.btn_save.pack(fill="x", pady=20, ipady=8)
-
-        # Grafik ve Durum Alanı
-        self.chart_frame = tk.Frame(self.root, bg="white")
-        self.chart_frame.pack(fill="both", expand=True, padx=15, pady=5)
-        self.status_lbl = tk.Label(self.root, text="", font=("Arial", 11, "bold"), bg="#F8F9FA")
-        self.status_lbl.pack()
-
-        # Alt Navigasyon
-        footer = tk.Frame(self.root, bg="white", height=60)
-        footer.pack(fill="x", side="bottom")
-        self.btn_rep = tk.Button(footer, text=LANGS[self.lang]["report"], bg="#E67E22", fg="white", font=("Arial", 9, "bold"), command=self.send_report)
-        self.btn_rep.pack(side="left", expand=True, fill="both")
-        self.btn_hist = tk.Button(footer, text=LANGS[self.lang]["history"], bg="#34495E", fg="white", font=("Arial", 9, "bold"), command=self.show_history)
-        self.btn_hist.pack(side="right", expand=True, fill="both")
-
-    def open_settings(self):
-        s_win = tk.Toplevel(self.root)
-        s_win.title(LANGS[self.lang]["settings"])
-        s_win.geometry("300x200")
-        tk.Label(s_win, text="Hasta Adı Soyadı:").pack(pady=5)
-        ne = tk.Entry(s_win); ne.insert(0, self.p_name); ne.pack()
-        tk.Label(s_win, text="İletişim No:").pack(pady=5)
-        te = tk.Entry(s_win); te.insert(0, self.p_tel); te.pack()
-        tk.Button(s_win, text="KAYDET", command=lambda: [self.save_settings(ne.get(), te.get()), s_win.destroy()]).pack(pady=10)
-
-    def change_lang(self, lang):
-        self.lang = lang
-        self.lbl_w.config(text=LANGS[self.lang]["weight"])
-        self.lbl_b.config(text=LANGS[self.lang]["ohm"])
-        self.btn_save.config(text=LANGS[self.lang]["save"])
-        self.btn_rep.config(text=LANGS[self.lang]["report"])
-        self.btn_hist.config(text=LANGS[self.lang]["history"])
-        self.refresh_plot()
-
-    def refresh_plot(self):
-        for w in self.chart_frame.winfo_children(): w.destroy()
-        self.cursor.execute("SELECT * FROM records ORDER BY rowid DESC LIMIT 5")
-        rows = self.cursor.fetchall()[::-1]
-        if not rows: return
-        
-        self.fig, ax1 = plt.subplots(figsize=(4, 3.5), dpi=90)
-        dts, ws, bs = [r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]
-        
-        l1, = ax1.plot(dts, ws, color="#2980B9", marker="o", label=LANGS[self.lang]["weight"]) # AĞIRLIK
-        ax1.set_ylabel(LANGS[self.lang]["weight"], color="#2980B9")
-        plt.xticks(rotation=25, fontsize=7)
-        
-        ax2 = ax1.twinx()
-        l2, = ax2.plot(dts, bs, color="#8E44AD", marker="s", linestyle="--", label=LANGS[self.lang]["ohm"]) # BİA
-        ax2.set_ylabel(LANGS[self.lang]["ohm"], color="#8E44AD")
-        
-        # Grafik Üzerindeki Gösterge (Legend)
-        ax1.legend([l1, l2], [l1.get_label(), l2.get_label()], loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=2, fontsize='x-small')
-        self.fig.tight_layout()
-        FigureCanvasTkAgg(self.fig, master=self.chart_frame).get_tk_widget().pack(fill="both")
-
-    def save_data(self):
-        try:
-            w, b = float(self.w_ent.get()), int(self.b_ent.get())
-            dt = datetime.now().strftime("%d/%m %H:%M")
-            self.cursor.execute("SELECT w, b FROM records ORDER BY rowid DESC LIMIT 1")
-            last = self.cursor.fetchone()
-            msg = LANGS[self.lang]["stable"]
-            if last and w > last[0] and b < last[1]: msg = LANGS[self.lang]["risk"]
-            self.status_lbl.config(text=msg, fg="#C0392B" if "RISK" in msg or "ÖDEM" in msg else "#27AE60")
-            self.cursor.execute("INSERT INTO records VALUES (?,?,?,?)", (dt, w, b, msg))
-            self.conn.commit()
-            self.refresh_plot()
-        except: messagebox.showerror("Hata", "Lütfen sayısal değerler girin!")
-
-    def send_report(self):
-        # --- KONTROL MEKANİZMASI ---
-        if self.fig is None:
-            messagebox.showwarning("Uyarı", LANGS[self.lang]["no_data"])
-            return
+        if last and w_input > last[0] and b_input < last[1]:
+            status_msg = L["risk"]
+            st.error(status_msg)
+        else:
+            st.success(status_msg)
             
-        chart_file = "current_trend.png"
-        self.fig.savefig(chart_file) # Grafiği resim olarak kaydet
-        
-        pdf_file = f"KKY_Rapor_{self.p_name.replace(' ','_')}.pdf"
-        c = canvas.Canvas(pdf_file, pagesize=letter)
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(50, 750, f"HASTA: {self.p_name}")
-        c.drawString(50, 730, f"TEL: {self.p_tel}")
+        cursor.execute("INSERT INTO records VALUES (?,?,?,?)", (dt_now, w_input, b_input, status_msg))
+        conn.commit()
+
+# --- GRAFİK ALANI ---
+st.divider()
+cursor.execute("SELECT * FROM records ORDER BY rowid DESC LIMIT 7")
+rows = cursor.fetchall()[::-1]
+
+if rows:
+    df = pd.DataFrame(rows, columns=["Date", "Weight", "BIA", "Status"])
+    
+    fig, ax1 = plt.subplots(figsize=(8, 4))
+    ax2 = ax1.twinx()
+    
+    ax1.plot(df["Date"], df["Weight"], color="#2980B9", marker="o", label=L["weight"])
+    ax2.plot(df["Date"], df["BIA"], color="#8E44AD", marker="s", linestyle="--", label=L["ohm"])
+    
+    ax1.set_ylabel(L["weight"], color="#2980B9")
+    ax2.set_ylabel(L["ohm"], color="#8E44AD")
+    plt.xticks(rotation=25)
+    
+    fig.legend(loc="upper center", ncol=2)
+    st.pyplot(fig)
+    
+    # PDF RAPORLAMA (Bellek üzerinden)
+    def generate_pdf():
+        buffer = io.BytesIO()
+        c = canvas.Canvas(buffer, pagesize=letter)
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(50, 750, f"HF PATIENT REPORT: {p_name}")
+        c.setFont("Helvetica", 12)
+        c.drawString(50, 730, f"Contact: {p_phone} | Date: {datetime.now().strftime('%Y-%m-%d')}")
         c.line(50, 720, 550, 720)
         
-        # Grafiği PDF'e göm
-        c.drawImage(chart_file, 50, 450, width=400, height=250)
-        
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(50, 430, "Son Ölçüm Geçmişi:")
-        self.cursor.execute("SELECT * FROM records ORDER BY rowid DESC LIMIT 10")
-        y = 410
-        c.setFont("Helvetica", 9)
-        for r in self.cursor.fetchall():
-            c.drawString(50, y, f"{r[0]} | Kilo: {r[1]} kg | BIA: {r[2]} Ω | {r[3]}")
+        y = 680
+        c.drawString(50, y, "Last Measurements:")
+        y -= 20
+        for index, row in df.iloc[::-1].iterrows():
+            c.drawString(50, y, f"{row['Date']} - W: {row['Weight']}kg - BIA: {row['BIA']} - {row['Status']}")
             y -= 15
-        
         c.save()
-        messagebox.showinfo("Başarılı", f"{LANGS[self.lang]['mail_ok']}\nDosya: {pdf_file}")
-        os.startfile(pdf_file)
+        buffer.seek(0)
+        return buffer
 
-    def show_history(self):
-        h_win = tk.Toplevel(self.root)
-        h_win.title(LANGS[self.lang]["history"])
-        h_win.geometry("380x500")
-        tree = ttk.Treeview(h_win, columns=("D", "W", "B", "S"), show="headings")
-        tree.heading("D", text="Tarih"); tree.heading("W", text="Kg"); tree.heading("B", text="Ω"); tree.heading("S", text="Durum")
-        self.cursor.execute("SELECT * FROM records ORDER BY rowid DESC")
-        for r in self.cursor.fetchall(): tree.insert("", "end", values=r)
-        tree.pack(fill="both", expand=True)
+    st.download_button(
+        label="📥 " + L["report"],
+        data=generate_pdf(),
+        file_name=f"Report_{p_name}.pdf",
+        mime="application/pdf",
+        use_container_width=True
+    )
+else:
+    st.warning(L["no_data"])
 
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = KKYApp(root)
-    root.mainloop()
+# --- GEÇMİŞ TABLOSU ---
+with st.expander(L["history"]):
+    cursor.execute("SELECT * FROM records ORDER BY rowid DESC")
+    all_data = cursor.fetchall()
+    if all_data:
+        st.table(pd.DataFrame(all_data, columns=["Date", "Weight", "BIA", "Result"]))
 
 #BU PROGRAMIN PROMPT ORDERI:SUNLARI EKLE;
 #  1-ILAVE INGILIZCE VE ALMANCA DIL DESTEGI UYGULA, 
@@ -250,3 +192,4 @@ Bir Sonraki Adım:
 bu şekilde kullanmak yeterli mi?
 
 """
+
