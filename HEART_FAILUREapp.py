@@ -161,7 +161,7 @@ with st.expander(L["history"]):
         st.table(pd.DataFrame(all_data, columns=["Date", "Weight", "BIA", "Result"]))
 
 
-Key Features of EVEYES 360: ENG
+"""Key Features of EVEYES 360: ENG
 Patient-Centric Header: The dashboard now features the patient’s name and contact information prominently in the header.
 This ensures that when a doctor receives a report, they immediately know which patient to contact.
 Embedded Charts in PDF: Using the fig.savefig command, the system captures a high-resolution snapshot of the current live trend chart
@@ -170,13 +170,14 @@ Color-Coded Visual Analytics: To ensure clarity, Weight (kg) is represented by b
 A clear legend at the top of the chart distinguishes the two metrics, making the data easy to interpret.
 BIA-Weight Correlation Logic (Edema Detection): In heart failure management,
 the most reliable early sign of edema (fluid retention) is an increase in body weight coupled with a decrease in body impedance (BIA).
-When this specific inverse correlation is detected, the app triggers a red "🚨 RISK: EDEMA!" alert.
+When this specific inverse correlation is detected, the app triggers a red "
+🚨 RISK: EDEMA!" alert.
 Next Steps: Deployment Strategy
 Currently, the application runs as a Web-App that mimics a mobile interface on desktop browsers.
 Current State: Fully responsive and accessible via smartphone browsers (Chrome/Safari) using the "Add to Home Screen" feature.
 Future Native Integration: If you wish to convert this into a Native Android/iOS App (.apk or .ipa) to access local hardware features or offline storage,
 we can transition the codebase using libraries like Kivy or BeeWare.
-Would you like to continue with the current high-efficiency Web-App model, or should we explore building a native mobile installation package?
+Would you like to continue with the current high-efficiency Web-App model, or should we explore building a native mobile installation package?"""
 
 """Önemli Özellikler TR
 Hasta Odaklı Başlık: Artık başlıkta hastanın adı ve telefon numarası yer alıyor. 
@@ -199,5 +200,6 @@ Bir Sonraki Adım:
 bu şekilde kullanmak yeterli mi?
 
 """
+
 
 
